@@ -14,6 +14,8 @@ import re
 import sys
 import urllib.parse
 import urllib.request
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from html import unescape
 
 TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
@@ -28,11 +30,17 @@ PAGES = {
     "SIC homepage": "https://www.sepangcircuit.com/",
 }
 
+# Nothing published before this instant is ever relevant. The race was only
+# confirmed on 26 July 2026, so anything older is archive noise.
+CUTOFF = datetime(2026, 7, 26, tzinfo=timezone.utc)
+
 # RSS/news feeds we scan for keyword hits.
 FEEDS = {
     "Google News": (
         "https://news.google.com/rss/search?q="
-        + urllib.parse.quote('Sepang F1 tickets OR "Bahrain Grand Prix in Malaysia" tiket')
+        + urllib.parse.quote(
+            'Sepang F1 tickets OR "Bahrain Grand Prix in Malaysia" tiket when:7d'
+        )
         + "&hl=en-MY&gl=MY&ceid=MY:en"
     ),
     "Paul Tan": "https://paultan.org/feed/",
@@ -75,6 +83,22 @@ def strip_html(s):
     s = re.sub(r"<script.*?</script>|<style.*?</style>", " ", s, flags=re.S | re.I)
     s = re.sub(r"<[^>]+>", " ", s)
     return re.sub(r"\s+", " ", unescape(s)).strip()
+
+
+def item_date(item):
+    """Pull a publish date out of an RSS item. None if unparseable."""
+    m = re.search(r"<(pubDate|dc:date|published|updated)>(.*?)</\1>", item, re.S | re.I)
+    if not m:
+        return None
+    raw = m.group(2).strip()
+    try:
+        return parsedate_to_datetime(raw)
+    except (TypeError, ValueError):
+        pass
+    try:
+        return datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
 
 
 def load_state():
@@ -136,12 +160,24 @@ def check_feeds(state, alerts):
 
             if key in seen:
                 continue
+
+            # Hard recency gate. Undated items are skipped rather than
+            # trusted, since every feed here does publish dates.
+            published = item_date(item)
+            if published is None or published < CUTOFF:
+                seen.add(key)
+                state["seen"].append(key)
+                continue
+
             if not (SUBJECT.search(title) and ACTION.search(title)):
+                seen.add(key)
+                state["seen"].append(key)
                 continue
 
             seen.add(key)
             state["seen"].append(key)
-            alerts.append(f"🚨 <b>{name}</b>\n{title}\n{link}")
+            stamp = published.astimezone().strftime("%d %b %Y %H:%M")
+            alerts.append(f"🚨 <b>{name}</b> · {stamp}\n{title}\n{link}")
 
 
 def main():
