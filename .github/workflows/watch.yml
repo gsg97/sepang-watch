@@ -32,6 +32,30 @@ jobs:
         run: |
           git config user.name "sepang-watch"
           git config user.email "actions@github.com"
-          git add state.json
-          git diff --staged --quiet || git commit -m "state update [skip ci]"
-          git push
+
+          cp state.json /tmp/state.json
+
+          for attempt in 1 2 3 4 5; do
+            git fetch origin main
+            git reset --hard origin/main
+            cp /tmp/state.json state.json
+            git add state.json
+
+            if git diff --staged --quiet; then
+              echo "no state change, nothing to push"
+              exit 0
+            fi
+
+            git commit -m "state update [skip ci]"
+
+            if git push origin main; then
+              echo "pushed on attempt $attempt"
+              exit 0
+            fi
+
+            echo "push rejected, remote moved ahead. retrying in 5s"
+            sleep 5
+          done
+
+          echo "::warning::could not persist state after 5 attempts"
+          exit 0
