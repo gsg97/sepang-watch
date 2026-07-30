@@ -14,7 +14,7 @@ import re
 import sys
 import urllib.parse
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from html import unescape
 
@@ -30,16 +30,25 @@ PAGES = {
     "SIC homepage": "https://www.sepangcircuit.com/",
 }
 
-# Nothing published before this instant is ever relevant. The race was only
-# confirmed on 26 July 2026, so anything older is archive noise.
-CUTOFF = datetime(2026, 7, 26, tzinfo=timezone.utc)
+# Absolute floor. The race was confirmed 26 July 2026, so anything older is
+# archive noise no matter what.
+FLOOR = datetime(2026, 7, 26, tzinfo=timezone.utc)
+
+# Rolling window. Only alert on items published this recently. Without this,
+# a fixed floor means week-old headlines keep qualifying forever.
+MAX_AGE_HOURS = 30
+
+
+def cutoff_now():
+    rolling = datetime.now(timezone.utc) - timedelta(hours=MAX_AGE_HOURS)
+    return max(FLOOR, rolling)
 
 # RSS/news feeds we scan for keyword hits.
 FEEDS = {
     "Google News": (
         "https://news.google.com/rss/search?q="
         + urllib.parse.quote(
-            'Sepang F1 tickets OR "Bahrain Grand Prix in Malaysia" tiket when:7d'
+            'Sepang F1 tickets OR "Bahrain Grand Prix in Malaysia" tiket when:2d'
         )
         + "&hl=en-MY&gl=MY&ceid=MY:en"
     ),
@@ -83,6 +92,21 @@ def strip_html(s):
     s = re.sub(r"<script.*?</script>|<style.*?</style>", " ", s, flags=re.S | re.I)
     s = re.sub(r"<[^>]+>", " ", s)
     return re.sub(r"\s+", " ", unescape(s)).strip()
+
+
+def canon_link(link):
+    """Strip query strings so tracking params don't create phantom new items."""
+    return link.split("?")[0].split("#")[0].strip().rstrip("/")
+
+
+def clean_title(title):
+    """Google News appends ' - Source' and varies the source name between
+    polls, which is what caused duplicate alerts. Drop it."""
+    return re.sub(r"\s+[-–|]\s+[^-–|]{1,60}$", "", title).strip()
+
+
+def esc(s):
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
 def item_date(item):
@@ -140,6 +164,9 @@ def check_pages(state, alerts):
 
 def check_feeds(state, alerts):
     seen = set(state["seen"])
+    cutoff = cutoff_now()
+    print(f"[info] feed cutoff: {cutoff.isoformat()}")
+
     for name, url in FEEDS.items():
         try:
             raw = fetch(url)
@@ -154,9 +181,13 @@ def check_feeds(state, alerts):
             if not t:
                 continue
 
-            title = unescape(strip_html(t.group(1)))
+            title = clean_title(unescape(strip_html(t.group(1))))
             link = unescape(l.group(1).strip()) if l else ""
-            key = hashlib.sha1((title + link).encode()).hexdigest()[:16]
+
+            # Key on the canonical link ONLY. Including the title caused the
+            # repeat alerts: Google News rewrites the source suffix between
+            # polls, which changed the hash for an article already seen.
+            key = hashlib.sha1(canon_link(link).encode()).hexdigest()[:16]
 
             if key in seen:
                 continue
@@ -164,7 +195,7 @@ def check_feeds(state, alerts):
             # Hard recency gate. Undated items are skipped rather than
             # trusted, since every feed here does publish dates.
             published = item_date(item)
-            if published is None or published < CUTOFF:
+            if published is None or published < cutoff:
                 seen.add(key)
                 state["seen"].append(key)
                 continue
@@ -176,8 +207,11 @@ def check_feeds(state, alerts):
 
             seen.add(key)
             state["seen"].append(key)
-            stamp = published.astimezone().strftime("%d %b %Y %H:%M")
-            alerts.append(f"🚨 <b>{name}</b> · {stamp}\n{title}\n{link}")
+            stamp = published.astimezone().strftime("%d %b %H:%M")
+            alerts.append(
+                f"🚨 <b>{esc(name)}</b> · {stamp}\n"
+                f'<a href="{esc(link)}">{esc(title)}</a>'
+            )
 
 
 def main():
