@@ -133,20 +133,19 @@ def check_endpoints(state, alerts):
         if previous == status:
             continue
 
-        went_live = previous in NOT_READY and status not in NOT_READY
+        # ONLY alert on a genuine transition into a working state. Movement
+        # between not-ready codes (500 -> 503 -> 502) is a server being worked
+        # on, and alerting on it is pure noise. Log it and move on.
+        if not (previous in NOT_READY and status not in NOT_READY):
+            print(f"[info] {name}: {previous} -> {status} (still not live)")
+            continue
 
-        if went_live:
-            alerts.append(
-                f"🔥🔥 <b>TICKETING ENDPOINT IS LIVE</b> 🔥🔥\n"
-                f"{esc(name)}\n"
-                f"status {previous} → <b>{status}</b>\n"
-                f'<a href="{esc(url)}">OPEN NOW</a>'
-            )
-        else:
-            alerts.append(
-                f"⚠️ <b>Status changed</b>\n{esc(name)}\n"
-                f"{previous} → {status}\n{esc(url)}"
-            )
+        alerts.append(
+            f"🔥🔥 <b>TICKETING ENDPOINT IS LIVE</b> 🔥🔥\n"
+            f"{esc(name)}\n"
+            f"status {previous} → <b>{status}</b>\n"
+            f'<a href="{esc(url)}">OPEN NOW</a>'
+        )
 
 
 def notify(text):
@@ -235,9 +234,13 @@ def check_pages(state, alerts):
         if previous == digest:
             continue
 
-        hot = SUBJECT.search(text) and ACTION.search(text)
-        flag = "🚨 <b>LIKELY TICKET NEWS</b>" if hot else "ℹ️ Page changed"
-        alerts.append(f"{flag}\n{name}\n{url}")
+        # Only alert when the changed page actually mentions tickets going on
+        # sale. A homepage rotating its banner images is not news.
+        if not (SUBJECT.search(text) and ACTION.search(text)):
+            print(f"[info] {name}: content changed, no ticket keywords")
+            continue
+
+        alerts.append(f"🚨 <b>LIKELY TICKET NEWS</b>\n{esc(name)}\n{esc(url)}")
 
 
 def check_feeds(state, alerts):
