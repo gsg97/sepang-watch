@@ -13,6 +13,7 @@ import os
 import re
 import sys
 import urllib.parse
+import urllib.error
 import urllib.request
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
@@ -30,6 +31,28 @@ PAGES = {
     "SIC homepage": "https://www.sepangcircuit.com/",
 }
 
+# Live ticketing endpoints. These are watched by HTTP STATUS CODE, not content.
+# The AudienceView seatSelect endpoint currently 500s because the performance
+# record exists but seat inventory isn't published. The moment that stops being
+# a 500, inventory is live. This is the earliest machine-detectable signal.
+#
+# Poll rate is governed by the workflow cron (~2 min). Do not lower it. A
+# faster rate is abuse, adds nothing, and risks getting the IP thrown into a
+# WAF blocklist on exactly the day it matters.
+ENDPOINTS = {
+    "Bahrain GP seat map (AudienceView)": (
+        "https://avapi.bahraingp.com/Online/seatSelect.asp"
+        "?createBO::WSmap=1&BOparam::WSmap::loadBestAvailable::performance_ids"
+        "=45C89B1D-FC79-4F87-AC66-A9DB18A17A39"
+    ),
+    "Bahrain GP ticket home": "https://avapi.bahraingp.com/Online/default.asp",
+    "Ticket2U search": "https://www.ticket2u.com.my/search?keyword=f1",
+}
+
+# A status in this set means "not on sale yet". Anything else is a state change
+# worth waking up for.
+NOT_READY = {500, 502, 503, 504, 404, 403}
+
 # Absolute floor. The race was confirmed 26 July 2026, so anything older is
 # archive noise no matter what.
 FLOOR = datetime(2026, 7, 26, tzinfo=timezone.utc)
@@ -42,6 +65,7 @@ MAX_AGE_HOURS = 30
 def cutoff_now():
     rolling = datetime.now(timezone.utc) - timedelta(hours=MAX_AGE_HOURS)
     return max(FLOOR, rolling)
+
 
 # RSS/news feeds we scan for keyword hits.
 FEEDS = {
@@ -69,6 +93,60 @@ def fetch(url, timeout=25):
     req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "*/*"})
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return r.read().decode("utf-8", errors="ignore")
+
+
+def fetch_status(url, timeout=25):
+    """Return (status_code, body_snippet). Never raises on HTTP errors, since
+    the error code IS the signal we care about here."""
+    req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "*/*"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.status, r.read(2000).decode("utf-8", errors="ignore")
+    except urllib.error.HTTPError as e:
+        body = ""
+        try:
+            body = e.read(2000).decode("utf-8", errors="ignore")
+        except Exception:
+            pass
+        return e.code, body
+    except Exception as e:
+        print(f"[warn] {url}: {e}", file=sys.stderr)
+        return None, ""
+
+
+def check_endpoints(state, alerts):
+    """Watch ticketing endpoints by status code. Alert on any transition out
+    of a not-ready state."""
+    codes = state.setdefault("codes", {})
+
+    for name, url in ENDPOINTS.items():
+        status, body = fetch_status(url)
+        if status is None:
+            continue
+
+        previous = codes.get(name)
+        codes[name] = status
+
+        if previous is None:
+            print(f"[init] {name}: baseline status {status}")
+            continue
+        if previous == status:
+            continue
+
+        went_live = previous in NOT_READY and status not in NOT_READY
+
+        if went_live:
+            alerts.append(
+                f"🔥🔥 <b>TICKETING ENDPOINT IS LIVE</b> 🔥🔥\n"
+                f"{esc(name)}\n"
+                f"status {previous} → <b>{status}</b>\n"
+                f'<a href="{esc(url)}">OPEN NOW</a>'
+            )
+        else:
+            alerts.append(
+                f"⚠️ <b>Status changed</b>\n{esc(name)}\n"
+                f"{previous} → {status}\n{esc(url)}"
+            )
 
 
 def notify(text):
@@ -130,7 +208,7 @@ def load_state():
         with open(STATE_FILE) as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
-        return {"hashes": {}, "seen": []}
+        return {"hashes": {}, "seen": [], "codes": {}}
 
 
 def save_state(state):
@@ -216,12 +294,17 @@ def check_feeds(state, alerts):
 
 def main():
     state = load_state()
-    alerts = []
 
+    # Endpoint alerts are the ones that actually matter, so they run first and
+    # get sent first even if the news feeds are noisy that cycle.
+    urgent = []
+    check_endpoints(state, urgent)
+
+    alerts = []
     check_pages(state, alerts)
     check_feeds(state, alerts)
 
-    for a in alerts[:10]:
+    for a in urgent + alerts[:10]:
         try:
             notify(a)
             print("[sent]", a.splitlines()[0])
@@ -229,7 +312,7 @@ def main():
             print(f"[warn] telegram send failed: {e}", file=sys.stderr)
 
     save_state(state)
-    print(f"done, {len(alerts)} alert(s)")
+    print(f"done, {len(urgent)} urgent, {len(alerts)} news alert(s)")
 
 
 if __name__ == "__main__":
