@@ -4,7 +4,6 @@
     "SIC homepage": "246312ca0f524bd3bb03582decf3bbfe343fef03d14a5921a840adf26297a680"
   },
   "seen": [
-    "6a31f8c4f506a5b1",
     "10a8066eae05cf07",
     "f1977b1a557d9311",
     "d20ae3c1153d0912",
@@ -403,7 +402,8 @@
     "fe58768c00cbc94c",
     "188cb06d2382d58f",
     "74b5496c50fbeed4",
-    "adf98f717e79923c"
+    "adf98f717e79923c",
+    "3769461b9c633c0c"
   ],
   "codes": {
     "Bahrain GP seat map (AudienceView)": 500,
