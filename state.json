@@ -1,13 +1,9 @@
 {
   "hashes": {
-    "SIC ticketing page": "4582815470d801f7a51074b8fe043c9d8301c37157c5599aa216fe7c4e12b32e",
-    "SIC homepage": "246312ca0f524bd3bb03582decf3bbfe343fef03d14a5921a840adf26297a680"
+    "SIC ticketing page": "40af15b30acb8e4825fdff5af56ddb9732d469e3cc9e377df091440696db2153",
+    "SIC homepage": "ea39cf0e18f2908b2933956b5b5c9d1f057083145f77cc67a1c13927551b1d22"
   },
   "seen": [
-    "28c6854623780661",
-    "d5e1e9a53037f31f",
-    "e38a2fddccfe3279",
-    "90b5391b244e6b49",
     "db5f932a881c9933",
     "7b2e7ab581f16355",
     "e34378a1f4ddf41d",
@@ -403,7 +399,11 @@
     "09dbfe08b10b3d9f",
     "1f7ddefa120384b9",
     "b5aba516459e3fb5",
-    "a43523fb99ee9e9d"
+    "a43523fb99ee9e9d",
+    "fac14581db1c0897",
+    "fc7cb1a8192fdc37",
+    "8b6d665d871edaa2",
+    "bc3ccf3f0f8683f5"
   ],
   "codes": {
     "Bahrain GP seat map (AudienceView)": 500,
